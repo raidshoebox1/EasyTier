@@ -13,13 +13,24 @@ const ANDROID_LOG_INFO: i32 = 4;
 const ANDROID_LOG_WARN: i32 = 5;
 const ANDROID_LOG_ERROR: i32 = 6;
 
-extern "C" {
+unsafe extern "C" {
     fn __android_log_write(prio: i32, tag: *const std::ffi::c_char, text: *const std::ffi::c_char) -> i32;
 }
 
-// Maximum log level stored as u8 (matches log::LevelFilter discriminants).
-// Default: 4 = Debug (matches the previous android_logger::init_once setting).
+// Maximum log level stored as u8.
+// 0=Off, 1=Error, 2=Warn, 3=Info, 4=Debug, 5=Trace
 static MAX_LEVEL: AtomicU8 = AtomicU8::new(4);
+
+fn u8_to_level_filter(v: u8) -> log::LevelFilter {
+    match v {
+        0 => log::LevelFilter::Off,
+        1 => log::LevelFilter::Error,
+        2 => log::LevelFilter::Warn,
+        3 => log::LevelFilter::Info,
+        4 => log::LevelFilter::Debug,
+        _ => log::LevelFilter::Trace,
+    }
+}
 
 // ── Java callback for log forwarding ──
 
@@ -80,7 +91,7 @@ struct CallbackLogger;
 
 impl log::Log for CallbackLogger {
     fn enabled(&self, metadata: &log::Metadata) -> bool {
-        let max = log::LevelFilter::from_u8(MAX_LEVEL.load(Ordering::Relaxed));
+        let max = u8_to_level_filter(MAX_LEVEL.load(Ordering::Relaxed));
         metadata.level() <= max
     }
 
@@ -168,6 +179,6 @@ pub(crate) fn set_log_level(level: &str) {
         "trace" => log::LevelFilter::Trace,
         _ => log::LevelFilter::Debug,
     };
-    MAX_LEVEL.store(lf as u8, Ordering::Relaxed);
+    MAX_LEVEL.store(llf as u8, Ordering::Relaxed);
     log::set_max_level(lf);
 }
