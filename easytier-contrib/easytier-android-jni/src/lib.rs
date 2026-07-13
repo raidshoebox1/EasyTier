@@ -191,6 +191,47 @@ pub extern "system" fn Java_com_easytier_jni_EasyTierJNI_getLastError(
     error::get_last_error_jni(env, class)
 }
 
+/// Set a Java log callback to receive EasyTier log messages in real time.
+///
+/// Java signature:
+/// `EasyTierJNI.setLogCallback(callback: LogCallback?)`
+///
+/// The callback must implement `LogCallback` with method
+/// `void onLog(String level, String target, String message)`.
+/// Pass null to clear the callback. Logs are also written to Android logcat
+/// (tag "EasyTier-JNI") regardless of whether a callback is set.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_easytier_jni_EasyTierJNI_setLogCallback(
+    mut env: JNIEnv,
+    _class: JClass,
+    callback: JObject,
+) {
+    logger::init();
+    if let Err(e) = logger::set_log_callback(&mut env, callback) {
+        error::set_callback_error(e);
+    }
+}
+
+/// Set the maximum log level for EasyTier.
+///
+/// Java signature:
+/// `EasyTierJNI.setLogLevel(level: String)`
+///
+/// level must be one of: "off", "error", "warn", "info", "debug", "trace".
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_easytier_jni_EasyTierJNI_setLogLevel(
+    mut env: JNIEnv,
+    _class: JClass,
+    level: JString,
+) {
+    logger::init();
+    let level_str = match strings::jstring_to_cstring(&mut env, &level) {
+        Ok(cstr) => cstr.to_string_lossy().into_owned(),
+        Err(_) => return,
+    };
+    logger::set_log_level(&level_str);
+}
+
 /// Start the managed config-server client.
 ///
 /// Java signature:
