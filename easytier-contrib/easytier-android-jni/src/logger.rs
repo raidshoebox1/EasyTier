@@ -179,6 +179,6 @@ pub(crate) fn set_log_level(level: &str) {
         "trace" => log::LevelFilter::Trace,
         _ => log::LevelFilter::Debug,
     };
-    MAX_LEVEL.store(llf as u8, Ordering::Relaxed);
+    MAX_LEVEL.store(lf as u8, Ordering::Relaxed);
     log::set_max_level(lf);
 }
