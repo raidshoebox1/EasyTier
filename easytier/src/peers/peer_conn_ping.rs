@@ -56,8 +56,25 @@ impl std::fmt::Debug for PingIntervalController {
 }
 
 impl PingIntervalController {
-    fn new(throughput: Arc<Throughput>, loss_counter: Arc<AtomicU32>) -> Self {
+    fn new(
+        throughput: Arc<Throughput>,
+        loss_counter: Arc<AtomicU32>,
+        max_heartbeat_interval_secs: u32,
+    ) -> Self {
         let last_throughput = (*throughput).clone();
+
+        // Calculate max_backoff_idx from the configured max interval.
+        // The effective interval is 1 << max_backoff_idx seconds, so
+        // max_backoff_idx = log2(max_heartbeat_interval_secs).
+        // Clamp to [1, 10] to avoid degenerate values (min 2s, max 1024s).
+        let max_backoff_idx = if max_heartbeat_interval_secs == 0 {
+            5 // fallback to original default (32s)
+        } else {
+            (max_heartbeat_interval_secs as f64)
+                .log2()
+                .round() as i32
+                .clamp(1, 10)
+        };
 
         Self {
             throughput,
@@ -67,7 +84,7 @@ impl PingIntervalController {
             last_send_logic_time: 0,
 
             backoff_idx: 0,
-            max_backoff_idx: 5,
+            max_backoff_idx,
 
             last_throughput,
         }
@@ -122,6 +139,9 @@ pub struct PeerConnPinger {
     throughput_stats: Arc<Throughput>,
     control_metrics: AggregateTrafficMetrics,
     tasks: JoinSet<Result<(), TunnelError>>,
+    max_heartbeat_interval_secs: u32,
+    max_missed_heartbeats: u32,
+    pong_timeout_secs: u32,
 }
 
 impl std::fmt::Debug for PeerConnPinger {
@@ -144,6 +164,9 @@ impl PeerConnPinger {
         loss_rate_stats: Arc<AtomicU32>,
         throughput_stats: Arc<Throughput>,
         control_metrics: AggregateTrafficMetrics,
+        max_heartbeat_interval_secs: u32,
+        max_missed_heartbeats: u32,
+        pong_timeout_secs: u32,
     ) -> Self {
         Self {
             my_peer_id,
@@ -155,6 +178,9 @@ impl PeerConnPinger {
             loss_rate_stats,
             throughput_stats,
             control_metrics,
+            max_heartbeat_interval_secs,
+            max_missed_heartbeats,
+            pong_timeout_secs,
         }
     }
 
@@ -171,6 +197,7 @@ impl PeerConnPinger {
         control_metrics: &AggregateTrafficMetrics,
         receiver: &mut broadcast::Receiver<ZCPacket>,
         seq: u32,
+        pong_timeout_secs: u32,
     ) -> Result<u128, Error> {
         // should add seq here. so latency can be calculated more accurately
         let req = Self::new_ping_packet(my_node_id, peer_id, seq);
@@ -180,7 +207,8 @@ impl PeerConnPinger {
 
         let now = Instant::now();
         // wait until we get a pong packet in ctrl_resp_receiver
-        let resp = timeout(Duration::from_secs(2), async {
+        let timeout_secs = if pong_timeout_secs == 0 { 2 } else { pong_timeout_secs };
+        let resp = timeout(Duration::from_secs(timeout_secs as u64), async {
             loop {
                 match receiver.recv().await {
                     Ok(p) => {
@@ -227,6 +255,8 @@ impl PeerConnPinger {
         let my_node_id = self.my_peer_id;
         let peer_id = self.peer_id;
         let latency_stats = self.latency_stats.clone();
+        let pong_timeout_secs = self.pong_timeout_secs;
+        let max_missed_heartbeats = self.max_missed_heartbeats;
 
         let (ping_res_sender, mut ping_res_receiver) = tokio::sync::mpsc::channel(100);
 
@@ -242,7 +272,7 @@ impl PeerConnPinger {
         let ctrl_resp_sender = self.ctrl_sender.clone();
         let stopped_clone = stopped.clone();
         let mut controller =
-            PingIntervalController::new(self.throughput_stats.clone(), loss_counter.clone());
+            PingIntervalController::new(self.throughput_stats.clone(), loss_counter.clone(), self.max_heartbeat_interval_secs);
         self.tasks.spawn(
             async move {
                 let mut req_seq = 0;
@@ -281,6 +311,7 @@ impl PeerConnPinger {
                             &control_metrics,
                             &mut receiver,
                             req_seq,
+                            pong_timeout_secs,
                         )
                         .await;
 
@@ -337,7 +368,7 @@ impl PeerConnPinger {
                 my_node_id
             );
 
-            if loss_counter.load(Ordering::Relaxed) >= 5 {
+            if loss_counter.load(Ordering::Relaxed) >= max_missed_heartbeats as u32 {
                 tracing::warn!(
                     ?ret,
                     ?self,

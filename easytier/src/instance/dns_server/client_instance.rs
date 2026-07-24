@@ -49,6 +49,12 @@ impl MagicDnsClientInstance {
         rpc_stub
             .handshake(BaseController::default(), HandshakeRequest::default())
             .await?;
+        let mobile_power_saving = peer_mgr.get_global_ctx().get_flags().mobile_power_saving;
+        let idle_sleep = if mobile_power_saving {
+            Duration::from_secs(5)
+        } else {
+            Duration::from_millis(500)
+        };
         loop {
             rpc_stub
                 .heartbeat(BaseController::default(), Void::default())
@@ -56,7 +62,7 @@ impl MagicDnsClientInstance {
 
             let last_update = peer_mgr.get_route_peer_info_last_update_time().await;
             if Some(last_update) == prev_last_update {
-                tokio::time::sleep(Duration::from_millis(500)).await;
+                tokio::time::sleep(idle_sleep).await;
                 continue;
             }
 

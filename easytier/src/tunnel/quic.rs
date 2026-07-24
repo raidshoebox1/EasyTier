@@ -270,16 +270,35 @@ mod crypto {
 pub fn transport_config() -> Arc<TransportConfig> {
     let mut config = TransportConfig::default();
 
+    let keepalive_secs = QUIC_KEEPALIVE_INTERVAL_SECS.load(std::sync::atomic::Ordering::Relaxed);
+    let keepalive = if keepalive_secs == 0 {
+        Duration::from_secs(5) // library default
+    } else {
+        Duration::from_secs(keepalive_secs as u64)
+    };
+
     config
         .max_concurrent_bidi_streams(u8::MAX.into())
         .max_concurrent_uni_streams(0u8.into())
-        .keep_alive_interval(Some(Duration::from_secs(5)))
+        .keep_alive_interval(Some(keepalive))
         .initial_mtu(1200)
         .min_mtu(1200)
         .enable_segmentation_offload(true)
         .congestion_controller_factory(Arc::new(BbrConfig::default()));
 
     Arc::new(config)
+}
+
+/// Global QUIC keepalive interval in seconds, set from `FlagsConfig` at
+/// instance startup.  0 = use library default (5s).
+static QUIC_KEEPALIVE_INTERVAL_SECS: std::sync::atomic::AtomicU32 =
+    std::sync::atomic::AtomicU32::new(0);
+
+/// Set the global QUIC keepalive interval.  Called once at instance
+/// startup from `instance::run()` based on the `quic_keepalive_interval_secs`
+/// flag.
+pub fn set_quic_keepalive_interval_secs(secs: u32) {
+    QUIC_KEEPALIVE_INTERVAL_SECS.store(secs, std::sync::atomic::Ordering::Relaxed);
 }
 
 pub fn server_config() -> ServerConfig {

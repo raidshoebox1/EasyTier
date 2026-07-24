@@ -871,6 +871,7 @@ impl Instance {
         use rand::Rng;
         let peer_manager_c = Arc::downgrade(&self.peer_manager.clone());
         let global_ctx_c = self.get_global_ctx();
+        let mobile_power_saving = global_ctx_c.get_flags().mobile_power_saving;
         #[cfg(feature = "tun")]
         let nic_ctx = self.nic_ctx.clone();
         let _peer_packet_receiver = self.peer_packet_receiver.clone();
@@ -895,10 +896,14 @@ impl Instance {
                 // do not allocate ip if no peer connected
                 let routes = peer_manager_c.list_routes().await;
                 if routes.is_empty() {
-                    next_sleep_time = 1;
+                    next_sleep_time = if mobile_power_saving { 10 } else { 1 };
                     continue;
                 } else {
-                    next_sleep_time = rand::thread_rng().gen_range(5..10);
+                    next_sleep_time = if mobile_power_saving {
+                        rand::thread_rng().gen_range(20..30)
+                    } else {
+                        rand::thread_rng().gen_range(5..10)
+                    };
                 }
 
                 let mut used_ipv4 = HashSet::new();
@@ -1068,6 +1073,27 @@ impl Instance {
     }
 
     pub async fn run(&mut self) -> Result<(), Error> {
+        // Apply mobile power-saving settings: lengthen the connector reconnect
+        // interval from 1s to 5s to reduce CPU wakeups on Android.
+        if self.global_ctx.get_flags().mobile_power_saving {
+            crate::set_global_var!(
+                MANUAL_CONNECTOR_RECONNECT_INTERVAL_MS,
+                5000
+            );
+            tracing::info!("mobile_power_saving: connector reconnect interval set to 5000ms");
+        }
+
+        // Apply configurable QUIC keepalive interval (0 = library default 5s).
+        // On mobile power-saving mode, this is typically set to 30s.
+        let quic_keepalive = self.global_ctx.get_flags().quic_keepalive_interval_secs;
+        if quic_keepalive > 0 {
+            #[cfg(feature = "quic")]
+            {
+                crate::tunnel::quic::set_quic_keepalive_interval_secs(quic_keepalive);
+                tracing::info!("quic keepalive interval set to {}s", quic_keepalive);
+            }
+        }
+
         self.prepare_public_ipv6_config().await?;
         self.listener_manager
             .lock()

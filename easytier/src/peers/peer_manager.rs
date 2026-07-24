@@ -1891,6 +1891,7 @@ impl PeerManager {
     async fn run_credential_gc_routine(&self) {
         let global_ctx = self.global_ctx.clone();
         let peer_map = self.peers.clone();
+        let mobile_power_saving = global_ctx.get_flags().mobile_power_saving;
         self.tasks.lock().await.spawn(async move {
             loop {
                 if global_ctx.get_network_identity().network_secret.is_some() {
@@ -1903,7 +1904,8 @@ impl PeerManager {
 
                     Self::close_untrusted_credential_peers(&peer_map, &global_ctx).await;
                 }
-                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                let sleep_secs = if mobile_power_saving { 30 } else { 1 };
+                tokio::time::sleep(std::time::Duration::from_secs(sleep_secs)).await;
             }
         });
     }

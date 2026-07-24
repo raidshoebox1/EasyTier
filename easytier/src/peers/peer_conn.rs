@@ -1439,6 +1439,11 @@ impl PeerConn {
     }
 
     pub fn start_pingpong(&mut self) {
+        let flags = self.global_ctx.get_flags();
+        let max_heartbeat_interval_secs = flags.peer_conn_max_heartbeat_interval_secs;
+        let max_missed_heartbeats = flags.peer_conn_max_missed_heartbeats;
+        let pong_timeout_secs = flags.peer_conn_pong_timeout_secs;
+
         let mut pingpong = PeerConnPinger::new(
             self.my_peer_id,
             self.get_peer_id(),
@@ -1448,6 +1453,9 @@ impl PeerConn {
             self.loss_rate_stats.clone(),
             self.throughput.clone(),
             self.control_metrics(&self.get_conn_info().network_name),
+            max_heartbeat_interval_secs,
+            max_missed_heartbeats,
+            pong_timeout_secs,
         );
 
         let close_event_notifier = self.close_event_notifier.clone();

@@ -1,30 +1,30 @@
 use atomic_shim::AtomicU64;
 use dashmap::DashMap;
 use std::sync::atomic::Ordering;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::Notify;
-use tokio::time;
-use tokio_util::task::AbortOnDropHandle;
 
 use crate::proto::common::LimiterConfig;
 
-/// Token Bucket rate limiter using atomic operations
+/// Token Bucket rate limiter using atomic operations.
+///
+/// Uses **lazy refill**: instead of a background timer that fires every
+/// `refill_interval` (default 10 ms) to top up tokens, the bucket is
+/// refilled on-demand inside [`try_consume`] / [`consume`].  This eliminates
+/// the periodic CPU wakeup that was especially costly on mobile / Android
+/// where every 10 ms timer fire prevents deep sleep.
 pub struct TokenBucket {
     available_tokens: AtomicU64, // Current token count (atomic)
     last_refill_time: AtomicU64, // Last refill time as micros since epoch
     config: BucketConfig,        // Immutable configuration
-    refill_task: Mutex<Option<AbortOnDropHandle<()>>>, // Background refill task
     start_time: Instant,         // Bucket creation time
-
-    refill_notifier: Arc<Notify>,
 }
 
 #[derive(Clone, Copy)]
 pub struct BucketConfig {
     capacity: u64,             // Maximum token capacity
     fill_rate: u64,            // Tokens added per second
-    refill_interval: Duration, // Time between refill operations
+    refill_interval: Duration, // Time between refill operations (used by consume)
 }
 
 impl From<LimiterConfig> for BucketConfig {
@@ -53,50 +53,32 @@ impl TokenBucket {
         Self::new_from_cfg(config)
     }
 
-    /// Creates a new Token Bucket rate limiter
+    /// Creates a new Token Bucket rate limiter.
     ///
     /// # Arguments
     /// * `capacity` - Bucket capacity in bytes
     /// * `bps` - Bandwidth limit in bytes per second
-    /// * `refill_interval` - Refill interval (recommended 10-50ms)
+    /// * `refill_interval` - Refill interval (used as the sleep duration
+    ///   in [`consume`] when tokens are insufficient; no background timer
+    ///   is spawned).
     pub fn new_from_cfg(config: BucketConfig) -> Arc<Self> {
-        // Create Arc instance with placeholder task
-        let arc_self = Arc::new(Self {
+        let now_micros = config
+            .refill_interval
+            .as_micros()
+            .max(1) as u64;
+        Arc::new(Self {
             available_tokens: AtomicU64::new(config.capacity),
-            last_refill_time: AtomicU64::new(0),
+            last_refill_time: AtomicU64::new(now_micros),
             config,
-            refill_task: Mutex::new(None),
             start_time: std::time::Instant::now(),
-            refill_notifier: Arc::new(Notify::new()),
-        });
-
-        // Start background refill task
-        let weak_bucket = Arc::downgrade(&arc_self);
-        let refill_interval = arc_self.config.refill_interval;
-        let refill_notifer = arc_self.refill_notifier.clone();
-        let refill_task = tokio::spawn(async move {
-            let mut interval = time::interval(refill_interval);
-            loop {
-                interval.tick().await;
-                let Some(bucket) = weak_bucket.upgrade() else {
-                    break;
-                };
-                bucket.refill();
-                refill_notifer.notify_waiters();
-            }
-        });
-
-        // Replace placeholder task with actual one
-        arc_self
-            .refill_task
-            .lock()
-            .unwrap()
-            .replace(AbortOnDropHandle::new(refill_task));
-        arc_self
+        })
     }
 
-    /// Internal refill method (called only by background task)
-    fn refill(&self) {
+    /// Lazily refill tokens based on elapsed time since the last refill.
+    ///
+    /// This is called from [`try_consume`] so that tokens are always
+    /// up-to-date without requiring a background timer.
+    pub fn refill(&self) {
         let now_micros = self.elapsed_micros();
         let prev_time = self.last_refill_time.swap(now_micros, Ordering::Acquire);
 
@@ -132,7 +114,10 @@ impl TokenBucket {
         self.start_time.elapsed().as_micros() as u64
     }
 
-    /// Attempt to consume tokens without blocking
+    /// Attempt to consume tokens without blocking.
+    ///
+    /// Performs a lazy refill first so that tokens accumulated since the
+    /// last call are credited before the consumption check.
     ///
     /// # Returns
     /// `true` if tokens were consumed, `false` if insufficient tokens
@@ -141,6 +126,9 @@ impl TokenBucket {
         if tokens > self.config.capacity {
             return false;
         }
+
+        // Lazy refill: credit tokens accumulated since last call
+        self.refill();
 
         let mut current = self.available_tokens.load(Ordering::Relaxed);
         loop {
@@ -161,10 +149,14 @@ impl TokenBucket {
         }
     }
 
-    /// Consume tokens, blocking if not available
+    /// Consume tokens, blocking if not available.
+    ///
+    /// Instead of relying on a background timer to notify when tokens are
+    /// available, this sleeps for one `refill_interval` between retries.
+    /// The CPU only wakes when a consumer is actually blocked.
     pub async fn consume(&self, tokens: u64) {
         while !self.try_consume(tokens) {
-            self.refill_notifier.notified().await;
+            tokio::time::sleep(self.config.refill_interval).await;
         }
     }
 }
@@ -340,6 +332,9 @@ mod tests {
 
         // Wait for multiple refills
         sleep(Duration::from_millis(1)).await;
+
+        // Lazy refill: call refill() to credit tokens accumulated during the sleep
+        bucket.refill();
 
         // Should have accumulated about 100 tokens (10,000 tokens/s * 0.001s)
         let tokens = bucket.available_tokens.load(Ordering::Relaxed);

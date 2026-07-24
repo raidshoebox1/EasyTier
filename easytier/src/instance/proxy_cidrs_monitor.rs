@@ -59,12 +59,18 @@ impl ProxyCidrsMonitor {
 
     /// Starts monitoring proxy_cidrs changes and emits events with diffs
     pub fn start(self) -> AbortOnDropHandle<()> {
+        let mobile_power_saving = self.global_ctx.get_flags().mobile_power_saving;
+        let poll_interval = if mobile_power_saving {
+            std::time::Duration::from_secs(10)
+        } else {
+            std::time::Duration::from_secs(1)
+        };
         AbortOnDropHandle::new(tokio::spawn(async move {
             let mut cur_proxy_cidrs = BTreeSet::new();
             let mut last_update = None::<Instant>;
 
             loop {
-                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                tokio::time::sleep(poll_interval).await;
 
                 let Some(peer_mgr) = self.peer_mgr.upgrade() else {
                     tracing::warn!("peer manager dropped, stopping ProxyCidrsMonitor");

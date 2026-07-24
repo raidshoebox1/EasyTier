@@ -84,6 +84,20 @@ message FlagsInConfig {
   // applied via setsockopt. Requires CAP_NET_ADMIN; silently ignored on
   // non-Linux platforms.
   optional uint32 socket_mark = 43;
+
+  // PeerConn heartbeat tuning.  These allow mobile / battery-powered
+  // devices to use longer heartbeat intervals to reduce CPU wakeups.
+  // Defaults preserve the original hardcoded behaviour.
+  uint32 peer_conn_max_heartbeat_interval_secs = 44; // default 32
+  uint32 peer_conn_max_missed_heartbeats = 45;       // default 5
+  uint32 peer_conn_pong_timeout_secs = 46;            // default 2
+
+  // Mobile power-saving mode.  When true, various background routines use
+  // longer intervals to reduce battery drain on Android / iOS.
+  bool mobile_power_saving = 47;
+
+  // QUIC keepalive interval in seconds.  0 = use library default (5s).
+  uint32 quic_keepalive_interval_secs = 48;
 }
 
 message RpcDescriptor {
