@@ -70,9 +70,9 @@ impl PingIntervalController {
         let max_backoff_idx = if max_heartbeat_interval_secs == 0 {
             5 // fallback to original default (32s)
         } else {
-            (max_heartbeat_interval_secs as f64)
+            ((max_heartbeat_interval_secs as f64)
                 .log2()
-                .round() as i32
+                .round() as i32)
                 .clamp(1, 10)
         };
 

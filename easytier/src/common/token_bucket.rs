@@ -3,6 +3,7 @@ use dashmap::DashMap;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use tokio_util::task::AbortOnDropHandle;
 
 use crate::proto::common::LimiterConfig;
 
