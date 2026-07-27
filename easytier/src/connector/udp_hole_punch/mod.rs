@@ -387,7 +387,9 @@ impl UdpHoePunchConnectorData {
 }
 
 #[derive(Clone)]
-struct UdpHolePunchPeerTaskLauncher {}
+struct UdpHolePunchPeerTaskLauncher {
+    mobile_power_saving: bool,
+}
 
 #[derive(Clone, Debug, Hash, Eq, PartialEq)]
 struct PunchTaskInfo {
@@ -525,7 +527,11 @@ impl PeerTaskLauncher for UdpHolePunchPeerTaskLauncher {
     }
 
     fn loop_interval_ms(&self) -> u64 {
-        5000
+        if self.mobile_power_saving {
+            30000
+        } else {
+            5000
+        }
     }
 }
 
@@ -544,10 +550,11 @@ pub struct UdpHolePunchConnector {
 
 impl UdpHolePunchConnector {
     pub fn new(peer_mgr: Arc<PeerManager>) -> Self {
+        let mobile_power_saving = peer_mgr.get_global_ctx().get_flags().mobile_power_saving;
         Self {
             server: UdpHolePunchServer::new(peer_mgr.clone()),
             client: PeerTaskManager::new_with_external_signal(
-                UdpHolePunchPeerTaskLauncher {},
+                UdpHolePunchPeerTaskLauncher { mobile_power_saving },
                 peer_mgr.clone(),
                 Some(peer_mgr.p2p_demand_notify()),
             ),
@@ -628,7 +635,9 @@ pub mod tests {
     }
 
     async fn collect_lazy_punch_peers(peer_mgr: Arc<PeerManager>) -> Vec<u32> {
-        let launcher = UdpHolePunchPeerTaskLauncher {};
+        let launcher = UdpHolePunchPeerTaskLauncher {
+            mobile_power_saving: peer_mgr.get_global_ctx().get_flags().mobile_power_saving,
+        };
         let data = launcher.new_data(peer_mgr);
         launcher
             .collect_peers_need_task(&data)

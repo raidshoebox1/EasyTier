@@ -11,7 +11,7 @@ use rand::{Rng, thread_rng};
 use tokio::{
     sync::broadcast,
     task::JoinSet,
-    time::{Interval, timeout},
+    time::{sleep, timeout},
 };
 use tracing::Instrument;
 
@@ -29,8 +29,6 @@ use crate::{
 struct PingIntervalController {
     throughput: Arc<Throughput>,
     loss_counter: Arc<AtomicU32>,
-
-    interval: Interval,
 
     logic_time: u64,
     last_send_logic_time: u64,
@@ -79,7 +77,6 @@ impl PingIntervalController {
         Self {
             throughput,
             loss_counter,
-            interval: tokio::time::interval(Duration::from_secs(1)),
             logic_time: 0,
             last_send_logic_time: 0,
 
@@ -90,9 +87,21 @@ impl PingIntervalController {
         }
     }
 
+    /// Sleep for `1 << backoff_idx` seconds, then advance `logic_time` by
+    /// the elapsed seconds.  Replaces the former fixed 1-second `interval`
+    /// that woke the CPU every second regardless of the actual ping
+    /// interval.  With adaptive sleep, the controller only wakes when it
+    /// is time to potentially send a ping.
     async fn tick(&mut self) {
-        self.interval.tick().await;
-        self.logic_time += 1;
+        if self.logic_time == 0 {
+            // First tick: immediate, matching the original tokio::interval
+            // behavior (first tick returns instantly).
+            self.logic_time = 1;
+        } else {
+            let sleep_secs = 1u64 << self.backoff_idx;
+            sleep(Duration::from_secs(sleep_secs)).await;
+            self.logic_time += sleep_secs;
+        }
     }
 
     fn tx_increase(&self) -> bool {

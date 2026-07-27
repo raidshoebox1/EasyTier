@@ -107,9 +107,11 @@ impl Peer {
 
         let conns_copy = conns.clone();
         let default_conn_id_copy = default_conn_id.clone();
+        let mobile_power_saving = global_ctx.get_flags().mobile_power_saving;
         let default_conn_id_clear_task = AbortOnDropHandle::new(tokio::spawn(async move {
             loop {
-                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                let sleep_secs = if mobile_power_saving { 30 } else { 5 };
+                tokio::time::sleep(std::time::Duration::from_secs(sleep_secs)).await;
                 if conns_copy.len() > 1 {
                     default_conn_id_copy.store(PeerConnId::default());
                 }

@@ -173,12 +173,6 @@ impl NetworkInstanceManager {
         Ok(ret)
     }
 
-    pub fn collect_network_infos_sync(
-        &self,
-    ) -> Result<BTreeMap<uuid::Uuid, NetworkInstanceRunningInfo>, anyhow::Error> {
-        tokio::runtime::Runtime::new()?.block_on(self.collect_network_infos())
-    }
-
     #[cfg(feature = "ffi-dataplane")]
     pub async fn data_plane_tcp_connect(
         &self,

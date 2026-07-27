@@ -3376,6 +3376,8 @@ impl RouteSessionManager {
     async fn maintain_sessions(&self, service_impl: Arc<PeerRouteServiceImpl>) -> bool {
         let mut cur_dst_peer_id_to_initiate = None;
         let mut next_sleep_ms = 0;
+        let mobile_power_saving = service_impl.global_ctx.get_flags().mobile_power_saving;
+        let idle_sleep_ms: u64 = if mobile_power_saving { 10000 } else { 1000 };
         loop {
             let mut recv = self.sync_now_broadcast.subscribe();
             select! {
@@ -3422,7 +3424,7 @@ impl RouteSessionManager {
             }
 
             if initiator_candidates.is_empty() {
-                next_sleep_ms = 1000;
+                next_sleep_ms = idle_sleep_ms;
                 continue;
             }
 
@@ -3479,7 +3481,7 @@ impl RouteSessionManager {
                 }
             }
 
-            next_sleep_ms = 1000;
+            next_sleep_ms = idle_sleep_ms;
         }
     }
 

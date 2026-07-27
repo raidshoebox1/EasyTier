@@ -814,7 +814,11 @@ impl PeerTaskLauncher for DirectConnectorLauncher {
     async fn all_task_done(&self, _data: &Self::Data) {}
 
     fn loop_interval_ms(&self) -> u64 {
-        5000
+        if self.0.global_ctx.get_flags().mobile_power_saving {
+            30000
+        } else {
+            5000
+        }
     }
 }
 

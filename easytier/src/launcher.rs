@@ -78,6 +78,10 @@ impl Default for EasyTierData {
 pub struct EasyTierLauncher {
     instance_alive: Arc<AtomicBool>,
     stop_flag: Arc<AtomicBool>,
+    /// Notified by `Drop::drop` to immediately wake `easytier_routine`'s
+    /// `stop_signal.notified().await`.  Replaces the former 100ms polling
+    /// loop that woke the CPU 10 times per second for the entire session.
+    stop_notify: Arc<tokio::sync::Notify>,
     thread_handle: Option<std::thread::JoinHandle<()>>,
     api_service: ArcMutApiService,
     running_cfg: String,
@@ -95,6 +99,7 @@ impl EasyTierLauncher {
             error_msg: Arc::new(RwLock::new(None)),
             running_cfg: String::new(),
             stop_flag: Arc::new(AtomicBool::new(false)),
+            stop_notify: Arc::new(tokio::sync::Notify::new()),
             data: Arc::new(EasyTierData::default()),
         }
     }
@@ -216,7 +221,7 @@ impl EasyTierLauncher {
 
         self.running_cfg = cfg.dump();
 
-        let stop_flag = self.stop_flag.clone();
+        let stop_notify = self.stop_notify.clone();
 
         let instance_alive = self.instance_alive.clone();
         instance_alive.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -245,20 +250,10 @@ impl EasyTierLauncher {
                 cvar.notify_all();
             }
 
-            let stop_notifier = Arc::new(tokio::sync::Notify::new());
-
-            let stop_notifier_clone = stop_notifier.clone();
-            rt.spawn(async move {
-                while !stop_flag.load(std::sync::atomic::Ordering::Relaxed) {
-                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                }
-                stop_notifier_clone.notify_one();
-            });
-
             let notifier = data.instance_stop_notifier.clone();
             let ret = rt.block_on(Self::easytier_routine(
                 cfg,
-                stop_notifier,
+                stop_notify,
                 api_service,
                 data,
             ));
@@ -343,6 +338,9 @@ impl Drop for EasyTierLauncher {
     fn drop(&mut self) {
         self.stop_flag
             .store(true, std::sync::atomic::Ordering::Relaxed);
+        // Immediately wake the easytier_routine's stop_signal.notified().await
+        // without the up-to-100ms delay of the former polling loop.
+        self.stop_notify.notify_one();
         if let Some(handle) = self.thread_handle.take()
             && let Err(e) = handle.join()
         {

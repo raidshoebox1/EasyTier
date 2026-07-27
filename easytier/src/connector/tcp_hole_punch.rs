@@ -406,7 +406,9 @@ struct TcpPunchTaskInfo {
 }
 
 #[derive(Clone)]
-struct TcpHolePunchPeerTaskLauncher {}
+struct TcpHolePunchPeerTaskLauncher {
+    mobile_power_saving: bool,
+}
 
 #[async_trait::async_trait]
 impl PeerTaskLauncher for TcpHolePunchPeerTaskLauncher {
@@ -521,7 +523,11 @@ impl PeerTaskLauncher for TcpHolePunchPeerTaskLauncher {
     async fn all_task_done(&self, _data: &Self::Data) {}
 
     fn loop_interval_ms(&self) -> u64 {
-        5000
+        if self.mobile_power_saving {
+            30000
+        } else {
+            5000
+        }
     }
 }
 
@@ -533,10 +539,11 @@ pub struct TcpHolePunchConnector {
 
 impl TcpHolePunchConnector {
     pub fn new(peer_mgr: Arc<PeerManager>) -> Self {
+        let mobile_power_saving = peer_mgr.get_global_ctx().get_flags().mobile_power_saving;
         Self {
             server: TcpHolePunchServer::new(peer_mgr.clone()),
             client: PeerTaskManager::new_with_external_signal(
-                TcpHolePunchPeerTaskLauncher {},
+                TcpHolePunchPeerTaskLauncher { mobile_power_saving },
                 peer_mgr.clone(),
                 Some(peer_mgr.p2p_demand_notify()),
             ),
@@ -648,7 +655,9 @@ mod tests {
     }
 
     async fn collect_lazy_punch_peers(peer_mgr: Arc<PeerManager>) -> Vec<u32> {
-        let launcher = TcpHolePunchPeerTaskLauncher {};
+        let launcher = TcpHolePunchPeerTaskLauncher {
+            mobile_power_saving: peer_mgr.get_global_ctx().get_flags().mobile_power_saving,
+        };
         let data = launcher.new_data(peer_mgr);
         launcher
             .collect_peers_need_task(&data)

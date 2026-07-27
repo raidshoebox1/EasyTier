@@ -1838,10 +1838,12 @@ impl PeerManager {
 
     async fn run_clean_peer_without_conn_routine(&self) {
         let peer_map = self.peers.clone();
+        let mobile_power_saving = self.global_ctx.get_flags().mobile_power_saving;
         self.tasks.lock().await.spawn(async move {
             loop {
                 peer_map.clean_peer_without_conn().await;
-                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                let sleep_secs = if mobile_power_saving { 15 } else { 3 };
+                tokio::time::sleep(std::time::Duration::from_secs(sleep_secs)).await;
             }
         });
     }

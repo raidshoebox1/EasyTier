@@ -10,8 +10,8 @@ use crate::{
     data_plane::remove_data_plane_handles_by_instance_ids,
     error::set_error_msg,
     state::{
-        INSTANCE_MANAGER, INSTANCE_MUTATION_LOCK, INSTANCE_NAME_ID_MAP, instance_name_exists,
-        lock_remote_instance_mutation,
+        ASYNC_RUNTIME, INSTANCE_MANAGER, INSTANCE_MUTATION_LOCK, INSTANCE_NAME_ID_MAP,
+        instance_name_exists, lock_remote_instance_mutation,
     },
     types::KeyValuePair,
 };
@@ -267,7 +267,7 @@ pub(crate) unsafe fn collect_network_infos(
         std::slice::from_raw_parts_mut(infos, max_length)
     };
 
-    let collected_infos = match INSTANCE_MANAGER.collect_network_infos_sync() {
+    let collected_infos = match ASYNC_RUNTIME.block_on(INSTANCE_MANAGER.collect_network_infos()) {
         Ok(infos) => infos,
         Err(e) => {
             set_error_msg(&format!("failed to collect network infos: {}", e));
