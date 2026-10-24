@@ -84,6 +84,12 @@ message FlagsInConfig {
   // applied via setsockopt. Requires CAP_NET_ADMIN; silently ignored on
   // non-Linux platforms.
   optional uint32 socket_mark = 43;
+
+  // Mobile power saving: relax background timers so the radio can idle.
+  // When enabled, the forced route resync interval grows from 10s to 120s
+  // and the peer heartbeat backoff cap grows from 32s to 128s.  Route changes
+  // still propagate immediately through the event-driven sync path.
+  bool mobile_power_saving = 44;
 }
 
 message RpcDescriptor {

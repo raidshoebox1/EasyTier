@@ -91,6 +91,16 @@ static FORCE_USE_CONN_LIST: AtomicBool = AtomicBool::new(false);
 //    in another zone when two zone restore the conneciton.
 static REMOVE_UNREACHABLE_PEER_INFO_AFTER: Duration = Duration::from_secs(90);
 
+/// Interval of the periodic "forced" route resync for one peer session.
+///
+/// Route changes are propagated immediately through `sync_now`; this interval
+/// only bounds how long a lost update can stay unnoticed.  Mobile power saving
+/// stretches it because every resync is a packet that keeps the cellular radio
+/// awake, and the radio takes several seconds to idle again after each one.
+fn forced_sync_interval_secs(mobile_power_saving: bool) -> u64 {
+    if mobile_power_saving { 120 } else { 10 }
+}
+
 type Version = u32;
 
 /// Check if `child` CIDR is a subset of `parent` CIDR.
@@ -3300,7 +3310,13 @@ impl RouteSessionManager {
                 };
 
                 // if we are initiator, we should ensure the dst has the session.
-                let sync_as_initiator = if last_sync.elapsed().as_secs() > 10 {
+                let forced_sync_interval = forced_sync_interval_secs(
+                    service_impl
+                        .global_ctx
+                        .get_flags()
+                        .mobile_power_saving,
+                );
+                let sync_as_initiator = if last_sync.elapsed().as_secs() > forced_sync_interval {
                     last_sync = Instant::now();
                     true
                 } else {
@@ -7119,5 +7135,16 @@ mod tests {
                 .get_peer_id_for_proxy(&"10.11.0.1".parse::<IpAddr>().unwrap()),
             Some(from_peer_id)
         );
+    }
+}
+
+#[cfg(test)]
+mod power_saving_tests {
+    use super::*;
+
+    #[test]
+    fn forced_sync_interval_follows_power_saving() {
+        assert_eq!(forced_sync_interval_secs(false), 10);
+        assert_eq!(forced_sync_interval_secs(true), 120);
     }
 }

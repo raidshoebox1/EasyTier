@@ -26,6 +26,14 @@ use crate::{
     },
 };
 
+/// Heartbeat backoff cap.  Each step doubles the interval starting at 1s, so
+/// index 5 is 32s and index 7 is 128s.  Mobile power saving uses the larger
+/// cap so an idle mesh stops waking the cellular radio every half minute; TCP
+/// still detects a dead connection on its own.
+fn max_heartbeat_backoff_idx(mobile_power_saving: bool) -> i32 {
+    if mobile_power_saving { 7 } else { 5 }
+}
+
 struct PingIntervalController {
     throughput: Arc<Throughput>,
     loss_counter: Arc<AtomicU32>,
@@ -56,7 +64,11 @@ impl std::fmt::Debug for PingIntervalController {
 }
 
 impl PingIntervalController {
-    fn new(throughput: Arc<Throughput>, loss_counter: Arc<AtomicU32>) -> Self {
+    fn new(
+        throughput: Arc<Throughput>,
+        loss_counter: Arc<AtomicU32>,
+        max_backoff_idx: i32,
+    ) -> Self {
         let last_throughput = (*throughput).clone();
 
         Self {
@@ -67,7 +79,7 @@ impl PingIntervalController {
             last_send_logic_time: 0,
 
             backoff_idx: 0,
-            max_backoff_idx: 5,
+            max_backoff_idx,
 
             last_throughput,
         }
@@ -121,6 +133,7 @@ pub struct PeerConnPinger {
     loss_rate_stats: Arc<AtomicU32>,
     throughput_stats: Arc<Throughput>,
     control_metrics: AggregateTrafficMetrics,
+    mobile_power_saving: bool,
     tasks: JoinSet<Result<(), TunnelError>>,
 }
 
@@ -144,6 +157,7 @@ impl PeerConnPinger {
         loss_rate_stats: Arc<AtomicU32>,
         throughput_stats: Arc<Throughput>,
         control_metrics: AggregateTrafficMetrics,
+        mobile_power_saving: bool,
     ) -> Self {
         Self {
             my_peer_id,
@@ -155,6 +169,7 @@ impl PeerConnPinger {
             loss_rate_stats,
             throughput_stats,
             control_metrics,
+            mobile_power_saving,
         }
     }
 
@@ -242,7 +257,11 @@ impl PeerConnPinger {
         let ctrl_resp_sender = self.ctrl_sender.clone();
         let stopped_clone = stopped.clone();
         let mut controller =
-            PingIntervalController::new(self.throughput_stats.clone(), loss_counter.clone());
+            PingIntervalController::new(
+                self.throughput_stats.clone(),
+                loss_counter.clone(),
+                max_heartbeat_backoff_idx(self.mobile_power_saving),
+            );
         self.tasks.spawn(
             async move {
                 let mut req_seq = 0;
@@ -357,5 +376,16 @@ impl PeerConnPinger {
 
         stopped.store(1, Ordering::Relaxed);
         ping_res_receiver.close();
+    }
+}
+
+#[cfg(test)]
+mod power_saving_tests {
+    use super::*;
+
+    #[test]
+    fn heartbeat_backoff_cap_follows_power_saving() {
+        assert_eq!(max_heartbeat_backoff_idx(false), 5);
+        assert_eq!(max_heartbeat_backoff_idx(true), 7);
     }
 }

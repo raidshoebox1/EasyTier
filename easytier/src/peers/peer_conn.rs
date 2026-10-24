@@ -1448,6 +1448,7 @@ impl PeerConn {
             self.loss_rate_stats.clone(),
             self.throughput.clone(),
             self.control_metrics(&self.get_conn_info().network_name),
+            self.global_ctx.get_flags().mobile_power_saving,
         );
 
         let close_event_notifier = self.close_event_notifier.clone();
